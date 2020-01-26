@@ -87,14 +87,22 @@ public class PCF8574GpioProvider extends GpioProviderBase implements GpioProvide
     private I2CDevice device;
     private GpioStateMonitor monitor = null;
     private BitSet currentStates = new BitSet(PCF8574_MAX_IO_PINS);
+    private final int periodicMonitoringSleepms;
 
     public PCF8574GpioProvider(int busNumber, int address) throws UnsupportedBusNumberException, IOException {
         // create I2C communications bus instance
-        this(I2CFactory.getInstance(busNumber), address);
+        this(I2CFactory.getInstance(busNumber), address, 50);
         i2cBusOwner = true;
     }
 
-    public PCF8574GpioProvider(I2CBus bus, int address) throws IOException {
+    /**
+     * 
+     * @param bus ex. {@link com.pi4j.io.i2c.I2CBus#BUS_1}
+     * @param address ex. {@link com.pi4j.gpio.extension.pcf.PCF8574GpioProvider#PCF8574_0x20}.
+     * @param periodicMonitoringSleepms >=50 if you want support for {@link com.pi4j.io.gpio.event.PinDigitalStateChangeEvent}. 0 if you want getState to be reading the state on-demand.
+     * @throws IOException if something seems wrong with the address.
+     */
+    public PCF8574GpioProvider(I2CBus bus, int address, int periodicMonitoringSleepms) throws IOException {
 
         // set reference to I2C communications bus instance
         this.bus = bus;
@@ -108,9 +116,11 @@ public class PCF8574GpioProvider extends GpioProviderBase implements GpioProvide
             currentStates.set(pin.getAddress(), true);
         }
 
+        this.periodicMonitoringSleepms = periodicMonitoringSleepms;
+        
         // start monitoring thread
-        monitor = new PCF8574GpioProvider.GpioStateMonitor(device);
-        monitor.start();
+	    monitor = new PCF8574GpioProvider.GpioStateMonitor(device);
+	    monitor.start();
     }
 
 
@@ -209,14 +219,15 @@ public class PCF8574GpioProvider extends GpioProviderBase implements GpioProvide
 
         public void shutdown() {
             shuttingDown = true;
+            // Johannes: this.interrupt() ?
         }
 
+        private final byte[] buffer = new byte[1];
         public void run() {
             while (!shuttingDown) {
                 try {
                     // read device pins state
-                    byte[] buffer = new byte[1];
-                    device.read(buffer, 0, 1);
+                    assert device.read(buffer, 0, 1) == 1;
                     BitSet pinStates = BitSet.valueOf(buffer);
 
                     // determine if there is a pin state difference
@@ -240,7 +251,7 @@ public class PCF8574GpioProvider extends GpioProviderBase implements GpioProvide
 
                     // ... lets take a short breather ...
                     Thread.currentThread();
-                    Thread.sleep(50);
+                    Thread.sleep(periodicMonitoringSleepms);
                 } catch (Exception ex) {
                     ex.printStackTrace();
                 }
